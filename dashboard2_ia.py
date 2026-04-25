@@ -1,7 +1,7 @@
 """
 DASHBOARD 2 - HERRAMIENTA DE IA (Machine Learning)
-Modelo Dinámico de Datos - Consumo Eléctrico PRONACA Pifo 2022-2024
-IA: Regresión Polinomial + Detección de Anomalías (Z-Score) + Recomendaciones automáticas
+Modelo Dinámico de Datos - Consumo Eléctrico PRONACA Pifo
+IA: Regresión Polinomial + Z-Score + Recomendaciones automáticas
 """
 
 from dash import Dash, dcc, html, Input, Output
@@ -12,9 +12,14 @@ from sklearn.linear_model import LinearRegression
 from sklearn.preprocessing import PolynomialFeatures
 from sklearn.metrics import mean_absolute_percentage_error
 from scipy import stats
-from datos_pronaca import generar_datos_pronaca, resumen_mensual
+from datos_pronaca import generar_datos_pronaca, resumen_mensual_real
 
-df = generar_datos_pronaca()
+df       = generar_datos_pronaca()
+planilla = resumen_mensual_real()
+
+VERDE = "#006633"
+ESTILO_TH = {"color": "#cc99ff", "padding": "8px", "borderBottom": "1px solid #333", "textAlign": "left"}
+ESTILO_TD = {"color": "#e6e6e6", "padding": "6px 8px", "borderBottom": "1px solid #222"}
 
 
 def entrenar_modelo_ia(df):
@@ -23,13 +28,13 @@ def entrenar_modelo_ia(df):
     X = df_s[["t"]].values
     y = df_s["consumo_kwh"].values
     poly = PolynomialFeatures(degree=3)
-    Xp = poly.fit_transform(X)
+    Xp   = poly.fit_transform(X)
     modelo = LinearRegression().fit(Xp, y)
     t_max = df_s["t"].max()
     t_fut = np.arange(t_max + 1, t_max + 366).reshape(-1, 1)
     fechas_fut = pd.date_range(df_s["fecha"].max() + pd.Timedelta(days=1), periods=365)
     y_pred = modelo.predict(poly.transform(t_fut))
-    mape = mean_absolute_percentage_error(y, modelo.predict(Xp)) * 100
+    mape   = mean_absolute_percentage_error(y, modelo.predict(Xp)) * 100
     return fechas_fut, y_pred, mape, poly
 
 
@@ -38,29 +43,24 @@ def detectar_anomalias(df, umbral=2.5):
     return df[z > umbral].copy()
 
 
-def generar_recomendaciones(df, anomalias):
-    promedio = df["consumo_kwh"].mean()
-    max_dia = df.loc[df["consumo_kwh"].idxmax(), "fecha"]
-    pct_finde = df[df["dia_semana"].isin(["Saturday","Sunday"])]["consumo_kwh"].mean() / promedio * 100
-    tendencia = (df[df["anio"]==2024]["consumo_kwh"].mean() - df[df["anio"]==2022]["consumo_kwh"].mean()) / df[df["anio"]==2022]["consumo_kwh"].mean() * 100
-    rec = []
-    if tendencia > 5:
-        rec.append(f"📈 Tendencia creciente del {tendencia:.1f}% en 3 años. Evaluar eficiencia energética o paneles solares.")
-    if pct_finde > 60:
-        rec.append(f"🏭 Consumo fin de semana = {pct_finde:.0f}% del promedio. Revisar equipos en stand-by.")
-    if len(anomalias) > 10:
-        rec.append(f"⚠️ Se detectaron {len(anomalias)} días anómalos. Revisar mantenimiento de equipos.")
-    rec.append(f"💡 Pico histórico: {max_dia.strftime('%d/%m/%Y')}. Programar mantenimiento preventivo.")
-    rec.append("🔋 Implementar sistema de gestión de energía (SCADA/EMS) para reducir demanda pico.")
+def generar_recomendaciones(df, anomalias, planilla):
+    max_mes = planilla.loc[planilla["costo_usd"].idxmax()]
+    min_mes = planilla.loc[planilla["costo_usd"].idxmin()]
+    total   = planilla["costo_usd"].sum()
+    rec = [
+        f"📈 Mes de mayor factura: {max_mes['mes_nombre']} {max_mes['anio']} — ${max_mes['costo_usd']:,.2f} USD",
+        f"📉 Mes de menor factura: {min_mes['mes_nombre']} {min_mes['anio']} — ${min_mes['costo_usd']:,.2f} USD",
+        f"💰 Facturación total registrada: ${total:,.2f} USD",
+        f"⚠️ Se detectaron {len(anomalias)} días con consumo anómalo (Z-Score > 2.5σ).",
+        "🔋 Implementar sistema SCADA/EMS para reducir demanda pico y optimizar factura.",
+        "💡 Revisar meses con variación superior al 30% para identificar causas operativas.",
+    ]
     return rec
 
 
 fechas_pred, consumo_pred, mape, poly = entrenar_modelo_ia(df)
-anomalias = detectar_anomalias(df)
-recomendaciones = generar_recomendaciones(df, anomalias)
-
-ESTILO_TH = {"color": "#cc99ff", "padding": "8px", "borderBottom": "1px solid #333", "textAlign": "left"}
-ESTILO_TD = {"color": "#e6e6e6", "padding": "6px 8px", "borderBottom": "1px solid #222"}
+anomalias    = detectar_anomalias(df)
+recomendaciones = generar_recomendaciones(df, anomalias, planilla)
 
 
 def kpi_dark(titulo, valor, color):
@@ -77,21 +77,23 @@ app = Dash(__name__)
 app.title = "PRONACA Pifo - Dashboard IA"
 
 app.layout = html.Div(
-    style={"fontFamily": "Segoe UI, sans-serif", "backgroundColor": "#0d1117", "padding": "20px", "minHeight": "100vh"},
+    style={"fontFamily": "Segoe UI, sans-serif", "backgroundColor": "#0d1117",
+           "padding": "20px", "minHeight": "100vh"},
     children=[
-        html.Div(style={"background": "linear-gradient(135deg, #7b2d8b, #1a1a2e)", "padding": "20px",
-                        "borderRadius": "10px", "marginBottom": "20px"}, children=[
+
+        html.Div(style={"background": "linear-gradient(135deg, #7b2d8b, #1a1a2e)",
+                        "padding": "20px", "borderRadius": "10px", "marginBottom": "20px"}, children=[
             html.H1("🤖 PRONACA Pifo — Dashboard IA | Predicción & Anomalías",
                     style={"color": "white", "margin": 0, "fontSize": "22px"}),
-            html.P(f"Dashboard 2 | Machine Learning | Regresión Polinomial + Z-Score | MAPE: {mape:.2f}%",
+            html.P(f"Dashboard 2 | Regresión Polinomial + Z-Score | Datos Reales | MAPE: {mape:.2f}%",
                    style={"color": "#cc99ff", "margin": "5px 0 0 0"}),
         ]),
 
         html.Div(style={"display": "flex", "gap": "15px", "marginBottom": "20px"}, children=[
             kpi_dark("Precisión del Modelo IA", f"{100-mape:.1f}%", "#2ca02c"),
             kpi_dark("Anomalías Detectadas", f"{len(anomalias)} días", "#d62728"),
-            kpi_dark("Predicción Promedio 2025", f"{np.mean(consumo_pred):,.0f} kWh/día", "#ff7f0e"),
-            kpi_dark("Costo Proyectado 2025", f"${np.sum(consumo_pred)*0.09/1e3:,.1f}K USD", "#1f77b4"),
+            kpi_dark("Factura Máx. Real", f"${planilla['costo_usd'].max():,.2f} USD", "#ff7f0e"),
+            kpi_dark("Factura Total Real", f"${planilla['costo_usd'].sum():,.0f} USD", "#1f77b4"),
         ]),
 
         html.Div(style={"backgroundColor": "#161b22", "padding": "12px", "borderRadius": "8px",
@@ -100,12 +102,11 @@ app.layout = html.Div(
             dcc.RadioItems(
                 id="vista-ia",
                 options=[
-                    {"label": " Predicción 2025", "value": "pred"},
-                    {"label": " Anomalías", "value": "anom"},
-                    {"label": " Descomposición", "value": "descomp"},
+                    {"label": " Predicción (Regresión Polinomial)", "value": "pred"},
+                    {"label": " Anomalías (Z-Score)",               "value": "anom"},
+                    {"label": " Planilla Real vs Modelo",           "value": "planilla"},
                 ],
                 value="pred", inline=True,
-                style={"color": "white"},
                 labelStyle={"marginRight": "20px", "color": "white"},
             ),
         ]),
@@ -129,7 +130,7 @@ app.layout = html.Div(
         ]),
 
         html.Div(style={"backgroundColor": "#161b22", "borderRadius": "10px", "padding": "15px"}, children=[
-            html.H3("⚠️ Días con Consumo Anómalo (Top 10)", style={"color": "#ff6b6b", "marginTop": 0}),
+            html.H3("⚠️ Días con Consumo Anómalo — Top 10", style={"color": "#ff6b6b", "marginTop": 0}),
             html.Div(id="tabla-anomalias"),
         ]),
     ]
@@ -139,10 +140,11 @@ app.layout = html.Div(
 @app.callback(
     Output("grafico-ia-principal", "figure"),
     Output("grafico-distribucion", "figure"),
-    Output("tabla-anomalias", "children"),
+    Output("tabla-anomalias",      "children"),
     Input("vista-ia", "value"),
 )
 def actualizar_ia(vista):
+
     if vista == "pred":
         fig = go.Figure()
         hist = df.set_index("fecha")["consumo_kwh"].resample("ME").mean()
@@ -150,7 +152,8 @@ def actualizar_ia(vista):
                                  line=dict(color="#1f77b4", width=2)))
         pred_s = pd.Series(consumo_pred, index=fechas_pred)
         pred_m = pred_s.resample("ME").mean()
-        fig.add_trace(go.Scatter(x=pred_m.index, y=pred_m.values, name="Predicción IA 2025",
+        fig.add_trace(go.Scatter(x=pred_m.index, y=pred_m.values,
+                                 name="Predicción IA (Reg. Polinomial)",
                                  line=dict(color="#ff7f0e", width=2, dash="dash")))
         fig.add_trace(go.Scatter(
             x=list(pred_m.index) + list(pred_m.index[::-1]),
@@ -158,45 +161,60 @@ def actualizar_ia(vista):
             fill="toself", fillcolor="rgba(255,127,14,0.15)",
             line=dict(color="rgba(0,0,0,0)"), name="Intervalo 95%",
         ))
-        fig.update_layout(title="Predicción IA del Consumo 2025 (Regresión Polinomial)",
+        fig.update_layout(title="Predicción IA — Regresión Polinomial Grado 3",
                           xaxis_title="Fecha", yaxis_title="kWh promedio mensual",
                           template="plotly_dark", legend=dict(orientation="h"))
 
     elif vista == "anom":
         fig = go.Figure()
         fig.add_trace(go.Scatter(x=df["fecha"], y=df["consumo_kwh"],
-                                 mode="lines", name="Consumo", line=dict(color="#4a9eff", width=1)))
+                                 mode="lines", name="Consumo diario",
+                                 line=dict(color="#4a9eff", width=1)))
         fig.add_trace(go.Scatter(x=anomalias["fecha"], y=anomalias["consumo_kwh"],
-                                 mode="markers", name="Anomalía",
+                                 mode="markers", name="Anomalía Z-Score > 2.5σ",
                                  marker=dict(color="red", size=8, symbol="x")))
-        fig.update_layout(title="Detección de Anomalías (Z-Score > 2.5σ)",
+        fig.update_layout(title="Detección de Anomalías — Z-Score > 2.5σ",
                           xaxis_title="Fecha", yaxis_title="kWh",
                           template="plotly_dark", legend=dict(orientation="h"))
 
-    else:
-        df_d = df.set_index("fecha")["consumo_kwh"].resample("ME").mean().reset_index()
-        df_d.columns = ["fecha", "consumo"]
-        df_d["tendencia"] = df_d["consumo"].rolling(3, center=True).mean()
-        df_d["estacional"] = df_d["consumo"] - df_d["tendencia"]
+    else:  # planilla real vs modelo
         fig = go.Figure()
-        fig.add_trace(go.Scatter(x=df_d["fecha"], y=df_d["consumo"], name="Original", line=dict(color="#4a9eff")))
-        fig.add_trace(go.Scatter(x=df_d["fecha"], y=df_d["tendencia"], name="Tendencia", line=dict(color="#ff7f0e", width=3)))
-        fig.add_trace(go.Bar(x=df_d["fecha"], y=df_d["estacional"], name="Estacional",
-                             marker_color="rgba(44,160,44,0.5)"))
-        fig.update_layout(title="Descomposición: Tendencia + Estacionalidad",
+        hist = df.set_index("fecha")["consumo_kwh"].resample("ME").mean()
+        fig.add_trace(go.Scatter(x=hist.index, y=hist.values * 0.09,
+                                 name="Modelo (USD estimado)",
+                                 line=dict(color="#4a9eff", width=2)))
+        # Puntos reales de planilla
+        fechas_plan = pd.to_datetime(
+            planilla["anio"].astype(str) + "-" + planilla["mes"].astype(str).str.zfill(2) + "-15"
+        )
+        fig.add_trace(go.Scatter(
+            x=fechas_plan, y=planilla["costo_usd"],
+            mode="markers+lines", name="Planilla Real (USD)",
+            marker=dict(color="#2ca02c", size=10, symbol="diamond"),
+            line=dict(color="#2ca02c", width=2, dash="dot"),
+        ))
+        fig.update_layout(title="Planilla Real vs Modelo de Consumo (USD)",
+                          xaxis_title="Fecha", yaxis_title="USD",
                           template="plotly_dark", legend=dict(orientation="h"))
 
+    # DISTRIBUCIÓN POR AÑO
     fig_dist = go.Figure()
-    for anio, color in [("2022", "#1f77b4"), ("2023", "#ff7f0e"), ("2024", "#2ca02c")]:
-        datos = df[df["anio"] == int(anio)]["consumo_kwh"]
-        fig_dist.add_trace(go.Histogram(x=datos, name=anio, opacity=0.7, marker_color=color, nbinsx=40))
+    colores_dist = {2024: "#1f77b4", 2025: "#ff7f0e", 2026: "#2ca02c"}
+    for a in sorted(df["anio"].unique()):
+        vals = df[df["anio"]==a]["consumo_kwh"]
+        fig_dist.add_trace(go.Histogram(
+            x=vals, name=str(a), opacity=0.7,
+            marker_color=colores_dist.get(a, "#888"), nbinsx=40,
+        ))
     fig_dist.update_layout(title="Distribución del Consumo por Año",
                            xaxis_title="kWh/día", yaxis_title="Frecuencia",
-                           barmode="overlay", template="plotly_dark", legend=dict(orientation="h"))
+                           barmode="overlay", template="plotly_dark",
+                           legend=dict(orientation="h"))
 
-    top = anomalias.nlargest(10, "consumo_kwh")[["fecha", "consumo_kwh", "costo_usd", "dia_semana"]]
-    filas = [html.Tr([html.Th("Fecha", style=ESTILO_TH), html.Th("Consumo (kWh)", style=ESTILO_TH),
-                      html.Th("Costo (USD)", style=ESTILO_TH), html.Th("Día", style=ESTILO_TH)])]
+    # TABLA ANOMALÍAS
+    top = anomalias.nlargest(10, "consumo_kwh")[["fecha","consumo_kwh","costo_usd","dia_semana"]]
+    filas = [html.Tr([html.Th(c, style=ESTILO_TH)
+                      for c in ["Fecha","Consumo (kWh)","Costo (USD)","Día"]])]
     for _, row in top.iterrows():
         filas.append(html.Tr([
             html.Td(row["fecha"].strftime("%d/%m/%Y"), style=ESTILO_TD),
